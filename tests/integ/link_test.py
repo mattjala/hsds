@@ -1052,6 +1052,27 @@ class LinkTest(unittest.TestCase):
             else:
                 self.assertTrue(False)  # unexpected
 
+    def testPutLinkTitleInBody(self):
+        # test that an object can be found via h5path request to domain endpoint
+        domain = self.base_domain + "/testPutLinkTitleInBody.h5"
+        print("testPutLinkTitleInBody", domain)
+        helper.setupDomain(domain)
+        headers = helper.getRequestHeaders(domain=domain)
+        req = helper.getEndpoint() + "/"
+
+        rsp = self.session.get(req, headers=headers)
+        self.assertEqual(rsp.status_code, 200)
+        rspJson = json.loads(rsp.text)
+        self.assertTrue("root" in rspJson)
+        root_id = rspJson["root"]
+
+        # create softlink with title in body
+        link_title = "softlink"
+        target_path = "somewhere"
+        req = helper.getEndpoint() + "/groups/" + root_id + "/links"
+        payload = {"h5path": target_path, "title": link_title}
+        rsp = self.session.put(req, data=json.dumps(payload), headers=headers)
+        self.assertEqual(rsp.status_code, 201)  # created
 
 if __name__ == "__main__":
     # setup test files

@@ -240,6 +240,8 @@ async def PUT_Link(request):
     await validateAction(app, domain, group_id, username, "create")
     # putLink will validate these arguments
     kwargs = {"bucket": bucket}
+    if link_title is None:
+        link_title = body.get("title")
     kwargs["tgt_id"] = body.get("id")
     kwargs["h5path"] = body.get("h5path")
     kwargs["h5domain"] = body.get("h5domain")

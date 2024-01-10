@@ -85,6 +85,7 @@ async def init():
     app.router.add_route("GET", path, GET_Links)
     app.router.add_route("POST", path, POST_Links)
     app.router.add_route("DELETE", path, DELETE_Links)
+    app.router.add_route("PUT", path, PUT_Link)
 
     path = "/groups/{id}/links/{title}"
     app.router.add_route("GET", path, GET_Link)
