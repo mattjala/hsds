@@ -1407,6 +1407,38 @@ class DomainTest(unittest.TestCase):
                 self.assertTrue("class") in item
                 self.assertTrue(item["class"] in ("domain", "folder"))
 
+    def testPostDomainWithPath(self):
+        domain = self.base_domain + "/testPostDomainWithPath.h6"
+        print("testPostDomainWithPath", self.base_domain)
+        headers = helper.getRequestHeaders(domain=domain)
+        req = helper.getEndpoint() + "/"
+
+        # create domain
+        rsp = self.session.put(req, headers=headers)
+        self.assertEqual(rsp.status_code, 201)
+        rspJson = json.loads(rsp.text)
+        self.assertTrue("root" in rspJson)
+        root_id = rspJson["root"]
+
+        # create group at target path
+        grp_name = "g1"
+        payload = {"link": {"id": root_id, "name": grp_name}}
+        req = helper.getEndpoint() + "/groups"
+        rsp = self.session.post(req, data=json.dumps(payload), headers=headers)
+        self.assertEqual(rsp.status_code, 201)
+        rspJson = json.loads(rsp.text)
+        group_id = rspJson["id"]
+
+        # make POST_Domain request to path
+        payload = {"h5path": grp_name}
+        req = helper.getEndpoint() + "/?parent_id=" + root_id + \
+            "&follow_soft_links=1&follow_external_links=1"
+
+        rsp = self.session.post(req, data=json.dumps(payload), headers=headers)
+        self.assertTrue(rsp.status_code, 200)
+        rspJson = json.loads(rsp.text)
+        self.assertTrue("id" in rspJson)
+        self.assertEqual(group_id, rspJson["id"])
 
 if __name__ == "__main__":
     # setup test files

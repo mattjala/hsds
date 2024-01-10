@@ -25,7 +25,7 @@ from . import config
 from .basenode import healthCheck, baseInit
 from . import hsds_logger as log
 from .util.authUtil import initUserDB, initGroupDB, setPassword
-from .domain_sn import GET_Domain, PUT_Domain, DELETE_Domain, GET_Domains
+from .domain_sn import GET_Domain, PUT_Domain, DELETE_Domain, GET_Domains, POST_Domain
 from .domain_sn import GET_Datasets, GET_Groups, GET_Datatypes
 from .domain_sn import GET_ACL, GET_ACLs, PUT_ACL
 from .group_sn import GET_Group, POST_Group, DELETE_Group
@@ -52,6 +52,7 @@ async def init():
     app.router.add_route("GET", path, GET_Domain)
     app.router.add_route("DELETE", path, DELETE_Domain)
     app.router.add_route("PUT", path, PUT_Domain)
+    app.router.add_route("POST", path, POST_Domain)
 
     path = "/domains"
     app.router.add_route("GET", path, GET_Domains)

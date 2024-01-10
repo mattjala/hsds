@@ -24,6 +24,7 @@ from aiohttp.web_exceptions import HTTPConflict, HTTPServiceUnavailable
 from aiohttp import ClientResponseError
 from aiohttp.web import json_response
 from requests.sessions import merge_setting
+from json import JSONDecodeError
 
 from .util.httpUtil import getObjectClass, http_post, http_put, http_get, http_delete
 from .util.httpUtil import getHref, respJsonAssemble
@@ -608,6 +609,216 @@ async def GET_Domain(request):
     log.response(request, resp=resp)
     return resp
 
+
+async def POST_Domain(request):
+    """TBD - Allows getting objects by h5path in body"""
+    log.request(request)
+    app = request.app
+    params = request.rel_url.query
+    log.debug(f"POST_Domain query params: {params}")
+
+    h5path = None
+    parent_id = None
+    include_links = False
+    include_attrs = False
+    follow_soft_links = False
+    follow_external_links = False
+
+    if "parent_id" in params and params["parent_id"]:
+        parent_id = params["parent_id"]
+    if "include_links" in params and params["include_links"]:
+        include_links = True
+    if "include_attrs" in params and params["include_attrs"]:
+        include_attrs = True
+    if "follow_soft_links" in params and params["follow_soft_links"]:
+        follow_soft_links = True
+    if "follow_external_links" in params and params["follow_external_links"]:
+        follow_external_links = True
+
+    (username, pswd) = getUserPasswordFromRequest(request)
+    if username is None and app["allow_noauth"]:
+        username = "default"
+    else:
+        await validateUserPassword(app, username, pswd)
+
+    domain = None
+    try:
+        domain = getDomainFromRequest(request)
+    except ValueError:
+        log.warn(f"Invalid domain: {domain}")
+        raise HTTPBadRequest(reason="Invalid domain name")
+
+    bucket = getBucketForDomain(domain)
+    log.debug(f"POST_Domain domain: {domain} bucket: {bucket}")
+
+    if not bucket:
+        # no bucket defined, raise 400
+        msg = "Bucket not provided"
+        log.warn(msg)
+        raise HTTPBadRequest(reason=msg)
+    if bucket:
+        checkBucketAccess(app, bucket)
+
+    verbose = False
+    if "verbose" in params and params["verbose"]:
+        verbose = True
+
+    if not domain:
+        log.info("no domain passed in, returning all top-level domains")
+        # no domain passed in, return top-level domains for this request
+        domains = await get_domains(request)
+        rsp_json = {"domains": domains}
+        rsp_json["hrefs"] = []
+        resp = await jsonResponse(request, rsp_json)
+        log.response(request, resp=resp)
+        return resp
+
+    log.info(f"got domain: {domain}")
+
+    domain_json = await getDomainJson(app, domain, reload=True)
+
+    if domain_json is None:
+        log.warn(f"domain: {domain} not found")
+        raise HTTPNotFound()
+
+    if "owner" not in domain_json:
+        log.error("No owner key found in domain")
+        raise HTTPInternalServerError()
+
+    if "acls" not in domain_json:
+        log.error("No acls key found in domain")
+        raise HTTPInternalServerError()
+
+    log.debug(f"got domain_json: {domain_json}")
+    # validate that the requesting user has permission to read this domain
+    # aclCheck throws exception if not authorized
+    aclCheck(app, domain_json, "read", username)
+
+    try:
+        body = await request.json()
+    except JSONDecodeError:
+        msg = "Unable to load JSON body"
+        log.warn(msg)
+        raise HTTPBadRequest(reason=msg)
+
+    if "h5path" in params:
+        h5path = params["h5path"]
+        log.debug(f"h5path found in params: {h5path}")
+    elif "h5path" in body:
+        h5path = body.get("h5path")
+        log.debug(f"h5path found in body: {h5path}")
+
+    # if h5path is passed in, return object info for that path
+    #   (if exists)
+    if h5path is not None:
+
+        # select which object to perform path search under
+        root_id = parent_id if parent_id else domain_json["root"]
+
+        # getObjectIdByPath throws 404 if not found
+        obj_id, domain, _ = await getObjectIdByPath(
+            app, root_id, h5path, bucket=bucket, domain=domain,
+            follow_soft_links=follow_soft_links,
+            follow_external_links=follow_external_links)
+        log.info(f"get obj_id: {obj_id} from h5path: {h5path}")
+        # get authoritative state for object from DN (even if
+        # it's in the meta_cache).
+        kwargs = {"refresh": True, "bucket": bucket,
+                  "include_attrs": include_attrs, "include_links": include_links}
+        log.debug(f"kwargs for getObjectJson: {kwargs}")
+
+        obj_json = await getObjectJson(app, obj_id, **kwargs)
+
+        obj_json = respJsonAssemble(obj_json, params, obj_id)
+
+        obj_json["domain"] = getPathForDomain(domain)
+
+        # client may not know class of object retrieved via path
+        obj_json["class"] = getObjectClass(obj_id)
+
+        hrefs = []
+        hrefs.append({"rel": "self", "href": getHref(request, "/")})
+        if "root" in domain_json:
+            root_uuid = domain_json["root"]
+            href = getHref(request, "/datasets")
+            hrefs.append({"rel": "database", "href": href})
+            href = getHref(request, "/groups")
+            hrefs.append({"rel": "groupbase", "href": href})
+            href = getHref(request, "/datatypes")
+            hrefs.append({"rel": "typebase", "href": href})
+            href = getHref(request, "/groups/" + root_uuid)
+            hrefs.append({"rel": "root", "href": href})
+            href = getHref(request, "/")
+            hrefs.append({"rel": "home", "href": href})
+
+        hrefs.append({"rel": "acls", "href": getHref(request, "/acls")})
+        parent_domain = getParentDomain(domain)
+        if not parent_domain or getPathForDomain(parent_domain) == "/":
+            is_toplevel = True
+        else:
+            is_toplevel = False
+        log.debug(f"href parent domain: {parent_domain}")
+        if not is_toplevel:
+            href = getHref(request, "/", domain=parent_domain)
+            hrefs.append({"rel": "parent", "href": href})
+
+        obj_json["hrefs"] = hrefs
+
+        resp = await jsonResponse(request, obj_json)
+        log.response(request, resp=resp)
+        log.debug(f"POST_Domain response={resp}")
+        return resp
+
+    # return just the keys as per the REST API
+    kwargs = {"verbose": verbose, "bucket": bucket}
+    rsp_json = await getDomainResponse(app, domain_json, **kwargs)
+
+    # include domain objects if requested
+    if params.get("getobjs") and "root" in domain_json:
+
+        log.debug("getting all domain objects")
+        root_id = domain_json["root"]
+        kwargs = {"include_attrs": include_attrs, "bucket": bucket}
+        domain_objs = await getDomainObjects(app, root_id, **kwargs)
+        if domain_objs:
+            rsp_json["domain_objs"] = domain_objs
+
+    # include dn_ids if requested
+    if "getdnids" in params and params["getdnids"]:
+        rsp_json["dn_ids"] = app["dn_ids"]
+
+    hrefs = []
+    hrefs.append({"rel": "self", "href": getHref(request, "/")})
+    if "root" in domain_json:
+        root_uuid = domain_json["root"]
+        href = getHref(request, "/datasets")
+        hrefs.append({"rel": "database", "href": href})
+        href = getHref(request, "/groups")
+        hrefs.append({"rel": "groupbase", "href": href})
+        href = getHref(request, "/datatypes")
+        hrefs.append({"rel": "typebase", "href": href})
+        href = getHref(request, "/groups/" + root_uuid)
+        hrefs.append({"rel": "root", "href": href})
+
+    hrefs.append({"rel": "acls", "href": getHref(request, "/acls")})
+    parent_domain = getParentDomain(domain)
+    if not parent_domain or getPathForDomain(parent_domain) == "/":
+        is_toplevel = True
+    else:
+        is_toplevel = False
+    log.debug(f"href parent domain: {parent_domain}")
+    if not is_toplevel:
+        href = getHref(request, "/", domain=parent_domain)
+        hrefs.append({"rel": "parent", "href": href})
+
+    rsp_json["hrefs"] = hrefs
+    # mixin limits, version
+    domain_json["limits"] = getLimits()
+    domain_json["compressors"] = getCompressors()
+    domain_json["version"] = getVersion()
+    resp = await jsonResponse(request, rsp_json)
+    log.response(request, resp=resp)
+    return resp
 
 async def getScanTime(app, root_id, bucket=None):
     """ Return timestamp for the last scan of the given root id """
