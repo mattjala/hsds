@@ -15,10 +15,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
-        test-other: ["none", "h5pyd"]
+        build-method: ["manual", "docker"]
 
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Test docker dir (Windows)
+        if: ${{(matrix.os == 'windows-latest') && (matrix.build-method == 'docker')}}
+        shell: bash
+        run: |
+          cd "C:\\Program Files"
+          find . -name "*DockerCli*"
+
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -49,9 +56,9 @@ jobs:
         shell: bash
         run: |
           pytest
-
-      - name: Run integration tests
+      - name: Start HSDS (Manual)
         shell: bash
+        if: ${{matrix.build-method == 'manual'}}
         env:
           ADMIN_PASSWORD: admin
           ADMIN_USERNAME: admin
@@ -60,52 +67,105 @@ jobs:
           USER2_NAME: test_user2
           USER2_PASSWORD: test
           HSDS_ENDPOINT: http://127.0.0.1:5101
-
+          BUCKET_NAME: hsdstest
         run: |
           mkdir data
           mkdir data/hsdstest
           cp admin/config/groups.default admin/config/groups.txt
           cp admin/config/passwd.default admin/config/passwd.txt
           hsds --root_dir data --host localhost --port 5101 --password_file admin/config/passwd.txt --logfile hs.log   --loglevel DEBUG  --config_dir=admin/config --count=4 &
-          sleep 10 # let the nodes get ready
+
+      - name: Configure Docker (Windows)
+        if: ${{(matrix.os == 'windows-latest') && (matrix.build-method == 'docker')}}
+        shell: bash
+        run: |
+          cd "C:\\Program Files"
+          dir
+          cd Docker
+          dir
+          cd Docker
+          dir
+
+      - name: Start HSDS (Docker)
+        shell: bash
+        if: ${{matrix.build-method == 'docker'}}
+        env:
+          ADMIN_PASSWORD: admin
+          ADMIN_USERNAME: admin
+          USER_NAME: test_user1
+          USER_PASSWORD: test
+          USER2_NAME: test_user2
+          USER2_PASSWORD: test
+          HSDS_ENDPOINT: http://127.0.0.1:5101
+          ROOT_DIR: ${{github.workspace}}/data
+          BUCKET_NAME: hsdstest
+        run: |
+          mkdir data
+          mkdir data/hsdstest
+          cp admin/config/groups.default admin/config/groups.txt
+          cp admin/config/passwd.default admin/config/passwd.txt
+          ./build.sh --nolint
+          ./runall.sh
+
+      - name: Wait for node startup
+        shell: bash
+        run: |
+          sleep 30
+
+      - name: Run HSDS tests
+        shell: bash
+        env:
+          ADMIN_PASSWORD: admin
+          ADMIN_USERNAME: admin
+          USER_NAME: test_user1
+          USER_PASSWORD: test
+          USER2_NAME: test_user2
+          USER2_PASSWORD: test
+          BUCKET_NAME: hsdstest
+        run: |
           pytest tests/integ/setup_test.py
           pytest tests/integ
 
       - name: Checkout h5pyd
-        if: ${{ ( matrix.test-other ==  'h5pyd' ) && ( matrix.os != 'windows-latest' ) }}
+        if: ${{ ( matrix.os != 'windows-latest' ) }}
         uses: actions/checkout@v4
         with:
           repository: HDFGroup/h5pyd
           path: ${{github.workspace}}/h5pyd
 
       - name: Install h5pyd
-        if: ${{ ( matrix.test-other ==  'h5pyd' ) && ( matrix.os != 'windows-latest' ) }}
+        if: ${{ ( matrix.os != 'windows-latest' ) }}
         working-directory: ${{github.workspace}}/h5pyd
         run: |
           pip install . -v
         
       - name: Create h5pyd test folder
-        if: ${{ ( matrix.test-other ==  'h5pyd' ) && ( matrix.os != 'windows-latest' ) }}
+        if: ${{ ( matrix.os != 'windows-latest' ) }}
         working-directory: ${{github.workspace}}/h5pyd
         env:
           HS_USERNAME: test_user1
           HS_PASSWORD: test
           TEST2_USERNAME: test_user1
           TEST2_PASSWORD: test
-          HS_ENDPOINT: http://127.0.0.1:5101
           H5PYD_TEST_FOLDER: /home/test_user1/h5pyd_tests/
+          HS_ENDPOINT: http://127.0.0.1:5101
         run: |
-          hstouch -e http://127.0.0.1:5101 /home/test_user1/h5pyd_tests/
+          hstouch -e $HS_ENDPOINT /home/test_user1/h5pyd_tests/
 
       - name: Run h5pyd tests
-        if: ${{ ( matrix.test-other ==  'h5pyd' ) && ( matrix.os != 'windows-latest' ) }}
+        if: ${{ ( matrix.os != 'windows-latest' ) }}
         working-directory: ${{github.workspace}}/h5pyd
         env:
           HS_USERNAME: test_user1
           HS_PASSWORD: test
           TEST2_USERNAME: test_user1
           TEST2_PASSWORD: test
-          HS_ENDPOINT: http://127.0.0.1:5101
           H5PYD_TEST_FOLDER: /home/test_user1/h5pyd_tests/
+          HS_ENDPOINT: http://127.0.0.1:5101
         run: |
           python testall.py
+
+      - name: Shut down Docker
+        if: ${{matrix.build-method == 'docker'}}
+        run: |
+          ./stopall.sh
