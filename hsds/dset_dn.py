@@ -20,7 +20,7 @@ from aiohttp.web import json_response
 
 from .util.idUtil import isValidUuid, validateUuid
 from .util.domainUtil import isValidBucketName
-from .util.timeUtil import getNow
+import time
 from .datanode_lib import get_obj_id, check_metadata_obj, get_metadata_obj
 from .datanode_lib import save_metadata_obj, delete_metadata_obj
 from . import hsds_logger as log
@@ -132,7 +132,7 @@ async def POST_Dataset(request):
         layout = body["layout"]  # client specified chunk layout
 
     # ok - all set, create committed type obj
-    now = getNow(app)
+    now = time.time()
 
     log.debug(f"POST_dataset typejson: {type_json}, shapejson: {shape_json}")
 

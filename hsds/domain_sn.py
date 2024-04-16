@@ -36,7 +36,7 @@ from .util.domainUtil import getPathForDomain, getLimits
 from .util.storUtil import getStorKeys, getCompressors
 from .util.boolparser import BooleanParser
 from .util.globparser import globmatch
-from .util.timeUtil import getNow
+import time
 from .servicenode_lib import getDomainJson, getObjectJson, getObjectIdByPath
 from .servicenode_lib import getRootInfo, checkBucketAccess, doFlush, getDomainResponse
 from .basenode import getVersion
@@ -901,19 +901,13 @@ async def PUT_Domain(request):
             post_params = {"timestamp": 0}  # have scan run immediately
             if bucket:
                 post_params["bucket"] = bucket
-            req_send_time = getNow(app)
+            req_send_time = time.time()
             log.debug(f"Sending rescan request at time {req_send_time}")
-
+            await http_post(app, notify_req, data={}, params=post_params)
             # Poll until the scan_complete time is greater than
             # req_send_time or 3 minutes have elapsed
             max_scan_duration = int(config.get("max_scan_duration", default=180))
             RESCAN_SLEEP_TIME = 0.1
-            INITIAL_SCAN_SLEEP_TIME = 0.4
-
-            # Start with brief wait to avoid time discrepancies between nodes
-            asyncio.sleep(INITIAL_SCAN_SLEEP_TIME)
-
-            await http_post(app, notify_req, data={}, params=post_params)
 
             while True:
                 scan_time = await getScanTime(app, root_id, bucket=bucket)
@@ -921,7 +915,7 @@ async def PUT_Domain(request):
                 if scan_time > req_send_time:
                     log.info(f"scan complete for root: {root_id}")
                     break
-                if getNow(app) - req_send_time > max_scan_duration:
+                if time.time() - req_send_time > max_scan_duration:
                     log.warn(f"scan failed to complete in {max_scan_duration}\
                               seconds for {root_id}")
                     raise HTTPServiceUnavailable()

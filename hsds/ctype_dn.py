@@ -22,7 +22,7 @@ from .util.idUtil import isValidUuid, validateUuid
 from .datanode_lib import get_obj_id, get_metadata_obj, save_metadata_obj
 from .datanode_lib import delete_metadata_obj, check_metadata_obj
 from .util.domainUtil import isValidBucketName
-from .util.timeUtil import getNow
+import time
 from . import hsds_logger as log
 
 
@@ -121,7 +121,7 @@ async def POST_Datatype(request):
     type_json = body["type"]
 
     # ok - all set, create committed type obj
-    now = getNow(app)
+    now = time.time()
 
     log.info(f"POST_datatype, typejson: {type_json}")
 

@@ -22,7 +22,7 @@ from .util.hdf5dtype import getItemSize, createDataType
 from .util.arrayUtil import getNumElements, bytesToArray
 from .util.dsetUtil import getHyperslabSelection, getFilterOps, getChunkDims, getFilters
 from .util.dsetUtil import getDatasetLayoutClass, getDatasetLayout, getShapeDims
-from .util.timeUtil import getNow
+import time
 from .util.storUtil import getStorKeys, putStorJSONObj, getStorJSONObj
 from .util.storUtil import deleteStorObj, getStorBytes, isStorObj
 from . import hsds_logger as log
@@ -382,7 +382,7 @@ async def scanRoot(app, rootid, update=False, bucket=None):
     results["logical_bytes"] = 0
     results["checksums"] = {}  # map of objid to checksums
     results["bucket"] = bucket
-    results["scan_start"] = getNow(app)
+    results["scan_start"] = time.time()
 
     app["scanRoot_results"] = results
     app["scanRoot_keyset"] = set()
@@ -437,7 +437,7 @@ async def scanRoot(app, rootid, update=False, bucket=None):
     # free up memory used by the checksums
     del results["checksums"]
 
-    results["scan_complete"] = getNow(app)
+    results["scan_complete"] = time.time()
 
     if update:
         # write .info object back to S3

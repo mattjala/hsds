@@ -24,7 +24,7 @@ from .util.idUtil import isValidUuid
 from .util.globparser import globmatch
 from .util.linkUtil import validateLinkName, getLinkClass, isEqualLink
 from .util.domainUtil import isValidBucketName
-from .util.timeUtil import getNow
+import time
 from .datanode_lib import get_obj_id, get_metadata_obj, save_metadata_obj
 from . import hsds_logger as log
 
@@ -365,7 +365,7 @@ async def PUT_Links(request):
     else:
         link_delete_set = set()
 
-    create_time = getNow(app)
+    create_time = time.time()
 
     for title in new_links:
         item = items[title]
@@ -473,7 +473,7 @@ async def DELETE_Links(request):
 
     if save_obj:
         # update the group lastModified
-        now = getNow(app)
+        now = time.time()
         group_json["lastModified"] = now
 
         # write back to S3
