@@ -139,9 +139,18 @@ async def k8s_update_dn_info(app):
     """
     log.info("k8s_update_dn_info")
     k8s_dn_label_selector = getDnLabelSelector(config)
-    pod_ips = await getPodIps(k8s_dn_label_selector)
+    pod_ips = []
+    try:
+        pod_ips = await getPodIps(k8s_dn_label_selector)
+    except Exception as e:
+        log.error(f"k8s_update_dn_info - failed to query pod ips: {e}")
     if not pod_ips:
-        log.error("Expected to find at least one hsds pod")
+        # A roster this node cannot confirm, while other pods may be updating
+        # theirs. Differing rosters give differing getObjPartition() results for
+        # the same obj_id, so stop serving rather than guess. The roster itself is
+        # kept, so one successful query recovers.
+        log.error("no hsds pods found")
+        app["cluster_state"] = "WAITING"
         return
     pod_ips.sort()  # for assigning node numbers
     log.debug(f"got pod_ips: {pod_ips}")
@@ -159,6 +168,18 @@ async def k8s_update_dn_info(app):
         scale_update = True
     elif app["dn_urls"] != dn_urls:
         log.info(f"pod ips have changed: {dn_urls}, fetch dn_ids")
+        scale_update = True
+    elif app.get("cluster_state") != "READY":
+        # the roster was incomplete last pass - e.g. a dn had not yet assigned
+        # itself a node_number, so it reported -1. Re-fetch until it converges;
+        # keying only off dn_urls changes leaves the cluster wedged in WAITING
+        # forever once the pod set goes stable.
+        #
+        # Costs one /info request per dn per health check, so n^2 across the cluster,
+        # but only while not READY. A cluster that never converges therefore polls
+        # indefinitely where it previously checked once; add backoff here if that
+        # becomes a problem at larger node counts.
+        log.info("cluster_state is not READY, re-fetching dn_ids")
         scale_update = True
     else:
         scale_update = False
@@ -206,9 +227,23 @@ async def k8s_update_dn_info(app):
                 consecutive = False
                 break
 
-        # save ids
+        # k8s_get_dn_info drops any dn whose /info failed, so a short list no
+        # longer indexes in step with dn_urls. getNodeNumber() reads that index,
+        # so keeping it would hand a dn the wrong partition and flush its caches,
+        # then flush them back on the next pass.
         log.info(f"scaling - updating dn_ids to: {dn_ids}")
-        app["dn_ids"] = dn_ids
+        if len(dn_ids) == len(dn_urls):
+            app["dn_ids"] = dn_ids
+        else:
+            log.warn(f"scaling - dn_ids {dn_ids} out of step with {len(dn_urls)} dn_urls")
+
+        # With no head node to report it, cluster_state is derived from the roster
+        # below: every partial view holds it at WAITING, so a rescale returns 503
+        # for about one health check interval rather than serving through churn on
+        # rosters that disagree. Only the dn dimension of isClusterReady() is
+        # covered - getObjPartition() partitions by dn count, and an sn that is not
+        # up is simply not serving.
+        app["cluster_state"] = "WAITING"
 
         if len(dn_ids) != new_count:
             log.warn(f"scaling - got {len(dn_ids)} dn_ids expected {new_count}")
@@ -216,8 +251,13 @@ async def k8s_update_dn_info(app):
             log.warn(f"scaling - got {len(dn_node_numbers)} node numbers, expected {new_count}")
         elif not consecutive:
             log.warn(f"scaling - node_numbers not consecutive - got: {dn_node_numbers}")
+        elif min_node_count != len(dn_urls) or max_node_count != len(dn_urls):
+            msg = "scaling - dn node_counts have not converged, got range: "
+            msg += f"{min_node_count}-{max_node_count}, expected: {len(dn_urls)}"
+            log.warn(msg)
         else:
             log.info("scaling - node numbers complete")
+            app["cluster_state"] = "READY"
 
 
 async def docker_update_dn_info(app):
