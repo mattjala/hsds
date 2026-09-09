@@ -46,7 +46,7 @@ spec:
             - name: NODE_TYPE
               value: sn
             - name: HEAD_PORT
-              value: null # no head container
+              value: "0" # no head container
             - name: PASSWORD_FILE
               value: /config/passwd.txt
             - name: AWS_ACCESS_KEY_ID
@@ -91,7 +91,7 @@ spec:
             - name: NODE_TYPE
               value: dn
             - name: HEAD_PORT
-              value: null # no head container
+              value: "0" # no head container
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
