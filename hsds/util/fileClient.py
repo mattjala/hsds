@@ -100,7 +100,11 @@ class FileClient:
             msg += "not computing ETag"
             log.warn(msg)
             return ""
-        hash_object = hashlib.md5(data)
+        # not a security use: this is the S3 ETag convention (a single-part
+        # S3 upload's ETag is the md5 of the object bytes), so the digest has
+        # to stay md5.  The flag says so, and keeps this working on hosts
+        # where FIPS mode makes an unqualified hashlib.md5() raise.
+        hash_object = hashlib.md5(data, usedforsecurity=False)
         return hash_object.hexdigest()
 
     def _getFileStats(self, filepath, data=None):
