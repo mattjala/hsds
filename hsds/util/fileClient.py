@@ -7,7 +7,7 @@ from inspect import iscoroutinefunction
 import time
 import aiofiles
 from aiohttp.web_exceptions import HTTPNotFound, HTTPInternalServerError
-from aiohttp.web_exceptions import HTTPBadRequest
+from aiohttp.web_exceptions import HTTPBadRequest, HTTPException
 from .. import hsds_logger as log
 from .. import config
 
@@ -88,21 +88,24 @@ class FileClient:
         filepath = pp.join(self._root_dir, bucket, key)
         return self._checkPathInRoot(filepath)
 
-    def _getFileStats(self, filepath, data=None):
-        log.debug(f"_getFileStats({filepath})")
-        if data is not None:
-            if not isinstance(data, bytes):
-                msg = "_getFileStats - expected data to be bytes, "
-                msg += "not computing ETag"
-                log.warn(msg)
-                ETag = ""
-            else:
-                hash_object = hashlib.md5(data)
-                ETag = hash_object.hexdigest()
-        else:
+    def _computeETag(self, data=None):
+        """MD5 of the bytes we were handed.  The ETag is a property of the
+        data, not of the file, so this needs no filesystem access."""
+        if data is None:
             msg = "getFileStats - data is None, so ETag will not be computed"
             log.debug(msg)
-            ETag = ""
+            return ""
+        if not isinstance(data, bytes):
+            msg = "_getFileStats - expected data to be bytes, "
+            msg += "not computing ETag"
+            log.warn(msg)
+            return ""
+        hash_object = hashlib.md5(data)
+        return hash_object.hexdigest()
+
+    def _getFileStats(self, filepath, data=None):
+        log.debug(f"_getFileStats({filepath})")
+        ETag = self._computeETag(data)
         try:
             file_stats = stat(filepath)
             key_stats = {
@@ -198,6 +201,11 @@ class FileClient:
             msg = f"CancelledError for get file obj {key}: {cle}"
             log.warn(msg)
             raise
+        except HTTPException:
+            # already carries a status (a 404 from a missing key, a 400 from
+            # the path-in-root check): let it through rather than relabelling
+            # it "Unexpected Exception" and turning it into a 500
+            raise
         except Exception as e:
             self._file_stats_increment("error_count")
             msg = f"Unexpected Exception {type(e)} get get_object {key}: {e}"
@@ -269,7 +277,24 @@ class FileClient:
             msg += f"start={start_time:.4f} finish={finish_time:.4f} "
             msg += f"elapsed={finish_time - start_time:.4f} bytes={len(data)}"
             log.info(msg)
-            write_rsp = self._getFileStats(filepath, data=data)
+            try:
+                write_rsp = self._getFileStats(filepath, data=data)
+            except HTTPNotFound:
+                # The write is the operation and it succeeded - the data
+                # reached the filesystem and close() returned.  A key that has
+                # gone again by the time we stat it was removed concurrently
+                # (bucketGC does exactly this), which is not this call's
+                # failure; the object stores have no such post-condition
+                # either.  Warn so a genuinely broken store still leaves a
+                # trace, and report what we wrote, the way s3Client does.
+                msg = f"fileClient.put_object - {bucket}/{key} not present "
+                msg += "after a successful write (deleted concurrently?)"
+                log.warn(msg)
+                write_rsp = {
+                    "ETag": self._computeETag(data),
+                    "Size": len(data),
+                    "LastModified": finish_time,
+                }
         except IOError as ioe:
             msg = f"fileClient: IOError writing {bucket}/{key}: {ioe}"
             log.warn(msg)
@@ -280,6 +305,11 @@ class FileClient:
             log.warn(msg)
             raise
 
+        except HTTPException:
+            # already carries a status (a 404 from a missing key, a 400 from
+            # the path-in-root check): let it through rather than relabelling
+            # it "Unexpected Exception" and turning it into a 500
+            raise
         except Exception as e:
             # file_stats_increment(app, "error_count")
             msg = f"fileClient Unexpected Exception {type(e)} "
@@ -333,6 +363,11 @@ class FileClient:
             log.warn(msg)
             raise
 
+        except HTTPException:
+            # already carries a status (a 404 from a missing key, a 400 from
+            # the path-in-root check): let it through rather than relabelling
+            # it "Unexpected Exception" and turning it into a 500
+            raise
         except Exception as e:
             self._file_stats_increment("error_count")
             msg = f"Unexpected Exception {type(e)} deleting file obj {key}: {e}"

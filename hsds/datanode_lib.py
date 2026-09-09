@@ -539,6 +539,14 @@ async def delete_metadata_obj(app, obj_id, notify=True, root_id=None, bucket=Non
 
     if isValidUuid(obj_id) and isSchema2Id(obj_id):
         if isRootObjId(obj_id):
+            # drop any queued scan for this root.  bucketScan and bucketGC are
+            # independent tasks, so a scan still on the queue would run after
+            # bucketGC has swept the prefix and write db/<root>/.info.json and
+            # .summary.json back into a domain that no longer exists.
+            root_scan_ids = app["root_scan_ids"]
+            if obj_id in root_scan_ids:
+                log.info(f"removing {obj_id} from root_scan_ids")
+                del root_scan_ids[obj_id]
             # add to gc ids so sub-objects will be deleted
             gc_buckets = app["gc_buckets"]
             if bucket not in gc_buckets:
