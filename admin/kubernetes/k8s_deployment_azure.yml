@@ -66,12 +66,14 @@ spec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 30
             periodSeconds: 60
+            timeoutSeconds: 5
             failureThreshold: 5
           readinessProbe:
             exec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
         - name: dn
           image: hdfgroup/hsds:0.7.0
@@ -115,12 +117,14 @@ spec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 30
             periodSeconds: 60
+            timeoutSeconds: 5
             failureThreshold: 5
           readinessProbe:
             exec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
       volumes:
       - name: accounts

@@ -43,6 +43,10 @@ data:
   override.yml: |
     root_dir: /data
     log_level: INFO
+    # kubectl port-forward pins to one pod instead of load balancing, so the
+    # whole suite lands on a single service node and the chunk-heavy tests push
+    # active_tasks past the default 100, which answers 503.
+    max_task_count: 0
     # bucket_name (hsdstest), allow_noauth (true) and k8s_dn_label_selector
     # (app=hsds) all match the shipped defaults in admin/config/config.yml.
 ---
@@ -102,6 +106,13 @@ spec:
             - name: override
               mountPath: /config/override.yml
               subPath: override.yml
+            # configmap built by run.sh from admin/config/*.default
+            - name: auth
+              mountPath: /config/passwd.txt
+              subPath: passwd.txt
+            - name: auth
+              mountPath: /config/groups.txt
+              subPath: groups.txt
           # Mirrors admin/kubernetes/: both probes assert node_state via
           # hsds-node-state, because /info bypasses the gate (INFO_METHODS in
           # hsds_logger.request) and so an httpGet against it stays green while the
@@ -111,12 +122,14 @@ spec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 30
             periodSeconds: 60
+            timeoutSeconds: 5
             failureThreshold: 5
           readinessProbe:
             exec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
         - name: dn
           image: hsds-test:ci
@@ -139,17 +152,26 @@ spec:
             - name: override
               mountPath: /config/override.yml
               subPath: override.yml
+            # configmap built by run.sh from admin/config/*.default
+            - name: auth
+              mountPath: /config/passwd.txt
+              subPath: passwd.txt
+            - name: auth
+              mountPath: /config/groups.txt
+              subPath: groups.txt
           livenessProbe:
             exec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 30
             periodSeconds: 60
+            timeoutSeconds: 5
             failureThreshold: 5
           readinessProbe:
             exec:
               command: ["hsds-node-state"]
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
       volumes:
         # single-node k3s, so a hostPath is shared by every replica
@@ -157,6 +179,9 @@ spec:
           hostPath:
             path: /tmp/hsds-test-data
             type: DirectoryOrCreate
+        - name: auth
+          configMap:
+            name: hsds-auth
         - name: override
           configMap:
             name: hsds-override

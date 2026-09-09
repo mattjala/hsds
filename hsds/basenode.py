@@ -139,9 +139,18 @@ async def k8s_update_dn_info(app):
     """
     log.info("k8s_update_dn_info")
     k8s_dn_label_selector = getDnLabelSelector(config)
-    pod_ips = await getPodIps(k8s_dn_label_selector)
+    pod_ips = []
+    try:
+        pod_ips = await getPodIps(k8s_dn_label_selector)
+    except Exception as e:
+        log.error(f"k8s_update_dn_info - failed to query pod ips: {e}")
     if not pod_ips:
-        log.error("Expected to find at least one hsds pod")
+        # A roster this node cannot confirm, while other pods may be updating
+        # theirs. Differing rosters give differing getObjPartition() results for
+        # the same obj_id, so stop serving rather than guess. The roster itself is
+        # kept, so one successful query recovers.
+        log.error("no hsds pods found")
+        app["cluster_state"] = "WAITING"
         return
     pod_ips.sort()  # for assigning node numbers
     log.debug(f"got pod_ips: {pod_ips}")
@@ -222,33 +231,26 @@ async def k8s_update_dn_info(app):
         log.info(f"scaling - updating dn_ids to: {dn_ids}")
         app["dn_ids"] = dn_ids
 
-        # Any partial view sets WAITING, so a rescale briefly returns 503 until the
-        # roster reconverges - about one health check interval. That is the trade this
-        # gate makes: nodes holding different dn rosters compute different partitions
-        # for the same obj_id, so serving through the churn risks inconsistent reads
-        # rather than a short unavailability.
+        # With no head node to report it, cluster_state is derived from the roster
+        # below: every partial view holds it at WAITING, so a rescale returns 503
+        # for about one health check interval rather than serving through churn on
+        # rosters that disagree. Only the dn dimension of isClusterReady() is
+        # covered - getObjPartition() partitions by dn count, and an sn that is not
+        # up is simply not serving.
+        app["cluster_state"] = "WAITING"
+
         if len(dn_ids) != new_count:
             log.warn(f"scaling - got {len(dn_ids)} dn_ids expected {new_count}")
-            app["cluster_state"] = "WAITING"
         elif len(dn_node_numbers) != len(dn_urls):
             log.warn(f"scaling - got {len(dn_node_numbers)} node numbers, expected {new_count}")
-            app["cluster_state"] = "WAITING"
         elif not consecutive:
             log.warn(f"scaling - node_numbers not consecutive - got: {dn_node_numbers}")
-            app["cluster_state"] = "WAITING"
         elif min_node_count != len(dn_urls) or max_node_count != len(dn_urls):
             msg = "scaling - dn node_counts have not converged, got range: "
             msg += f"{min_node_count}-{max_node_count}, expected: {len(dn_urls)}"
             log.warn(msg)
-            app["cluster_state"] = "WAITING"
         else:
             log.info("scaling - node numbers complete")
-            # No head node exists in this mode to report cluster_state, so derive it
-            # from the dn roster. This deliberately covers only the dn dimension of
-            # isClusterReady(): that function also compares the sn count against
-            # target_sn_count, which is not checked here. getObjPartition() partitions
-            # by dn count, so dn completeness is what decides whether nodes agree on
-            # partitioning - an sn that is not up is simply not serving.
             app["cluster_state"] = "READY"
 
 

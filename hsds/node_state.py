@@ -21,6 +21,9 @@ serving node from a wedged one therefore has to inspect node_state itself.
 The port is derived from NODE_TYPE, so the sn and dn containers can share one
 identical probe command rather than each hardcoding a port.
 
+Probes need an explicit timeoutSeconds. The kubelet defaults it to 1s, which an
+interpreter start plus a config load can exceed under cpu pressure.
+
 Exit codes:
     0  node reports READY
     1  node reports any other state, or /info could not be reached
@@ -42,9 +45,11 @@ def main():
         print(f"no port configured for NODE_TYPE={node_type}", file=sys.stderr)
         return 2
 
+    # under the manifests' probe timeoutSeconds, so a slow node reaches the
+    # stderr message below instead of being killed mid-request
     url = f"http://localhost:{port}/info"
     try:
-        with urllib.request.urlopen(url, timeout=10) as rsp:
+        with urllib.request.urlopen(url, timeout=3) as rsp:
             state = json.load(rsp)["node"]["state"]
     except Exception as e:
         print(f"{url}: {e}", file=sys.stderr)
