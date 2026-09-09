@@ -227,9 +227,15 @@ async def k8s_update_dn_info(app):
                 consecutive = False
                 break
 
-        # save ids
+        # k8s_get_dn_info drops any dn whose /info failed, so a short list no
+        # longer indexes in step with dn_urls. getNodeNumber() reads that index,
+        # so keeping it would hand a dn the wrong partition and flush its caches,
+        # then flush them back on the next pass.
         log.info(f"scaling - updating dn_ids to: {dn_ids}")
-        app["dn_ids"] = dn_ids
+        if len(dn_ids) == len(dn_urls):
+            app["dn_ids"] = dn_ids
+        else:
+            log.warn(f"scaling - dn_ids {dn_ids} out of step with {len(dn_urls)} dn_urls")
 
         # With no head node to report it, cluster_state is derived from the roster
         # below: every partial view holds it at WAITING, so a rescale returns 503

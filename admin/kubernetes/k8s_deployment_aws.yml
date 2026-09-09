@@ -46,7 +46,7 @@ spec:
             - name: NODE_TYPE
               value: sn
             - name: HEAD_PORT
-              value: null # no head container
+              value: "0" # no head container
             - name: PASSWORD_FILE
               value: /config/passwd.txt
             - name: AWS_ACCESS_KEY_ID
@@ -59,24 +59,12 @@ spec:
                 secretKeyRef:
                   name: aws-auth-keys
                   key: aws_secret_access_key
-          # asserts node_state, not merely that the process answers: /info is in
-          # INFO_METHODS (hsds_logger.request) and bypasses the node_state gate, so an
-          # httpGet against it returns 200 even while the node is wedged in WAITING and
-          # 503-ing every real request. hsds-node-state takes its port from NODE_TYPE.
           livenessProbe:
-            exec:
-              command: ["hsds-node-state"]
-            initialDelaySeconds: 30
-            periodSeconds: 60
-            timeoutSeconds: 5
-            failureThreshold: 5
-          readinessProbe:
-            exec:
-              command: ["hsds-node-state"]
+            httpGet:
+              path: /info
+              port: 5101
             initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+            periodSeconds: 60
         - name: dn
           image: hdfgroup/hsds:0.7.0
           imagePullPolicy: IfNotPresent
@@ -103,7 +91,7 @@ spec:
             - name: NODE_TYPE
               value: dn
             - name: HEAD_PORT
-              value: null # no head container
+              value: "0" # no head container
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -114,24 +102,12 @@ spec:
                 secretKeyRef:
                   name: aws-auth-keys
                   key: aws_secret_access_key
-          # asserts node_state, not merely that the process answers: /info is in
-          # INFO_METHODS (hsds_logger.request) and bypasses the node_state gate, so an
-          # httpGet against it returns 200 even while the node is wedged in WAITING and
-          # 503-ing every real request. hsds-node-state takes its port from NODE_TYPE.
           livenessProbe:
-            exec:
-              command: ["hsds-node-state"]
-            initialDelaySeconds: 30
-            periodSeconds: 60
-            timeoutSeconds: 5
-            failureThreshold: 5
-          readinessProbe:
-            exec:
-              command: ["hsds-node-state"]
+            httpGet:
+              path: /info
+              port: 6101
             initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+            periodSeconds: 60
       volumes:
         - name: accounts
           secret:

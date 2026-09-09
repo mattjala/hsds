@@ -184,8 +184,10 @@ assert_all_ready() {
 
 assert_serving() {
   local pod counts
-  pod="$(pods | head -1)"
-  counts="$(service_status_counts "$pod")"
+  # errexit would take a failing kubectl before the empty check below can report
+  # it, losing the diagnostics that make the failure readable
+  pod="$(pods | head -1)" || true
+  counts="$(service_status_counts "$pod")" || true
   if [ -z "$counts" ]; then
     echo "    FAIL: no response from service" >&2
     diagnose

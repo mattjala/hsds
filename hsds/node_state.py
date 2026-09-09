@@ -38,18 +38,25 @@ import urllib.request
 from . import config
 
 
+# entrypoint.sh runs the head node as NODE_TYPE=head_node, but the config key is
+# head_port
+PORT_KEYS = {"sn": "sn_port", "dn": "dn_port", "head_node": "head_port"}
+
+
 def main():
     node_type = os.environ.get("NODE_TYPE") or "sn"
-    port = config.get(f"{node_type}_port")
+    port = config.get(PORT_KEYS.get(node_type, f"{node_type}_port"))
     if not port:
         print(f"no port configured for NODE_TYPE={node_type}", file=sys.stderr)
         return 2
 
-    # under the manifests' probe timeoutSeconds, so a slow node reaches the
-    # stderr message below instead of being killed mid-request
+    # A proxy injected into the pod environment would capture this, so go direct.
+    # The timeout is under the manifests' probe timeoutSeconds, so a slow node
+    # reaches the stderr message below instead of being killed mid-request.
     url = f"http://localhost:{port}/info"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(url, timeout=3) as rsp:
+        with opener.open(url, timeout=3) as rsp:
             state = json.load(rsp)["node"]["state"]
     except Exception as e:
         print(f"{url}: {e}", file=sys.stderr)

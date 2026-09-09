@@ -113,10 +113,10 @@ spec:
             - name: auth
               mountPath: /config/groups.txt
               subPath: groups.txt
-          # Mirrors admin/kubernetes/: both probes assert node_state via
-          # hsds-node-state, because /info bypasses the gate (INFO_METHODS in
-          # hsds_logger.request) and so an httpGet against it stays green while the
-          # node is wedged in WAITING. The port comes from NODE_TYPE.
+          # Both probes assert node_state via hsds-node-state. /info bypasses the
+          # gate (INFO_METHODS in hsds_logger.request), so an httpGet against it
+          # stays green while the node is wedged in WAITING. This image is built
+          # from the working tree, so it always carries the script.
           livenessProbe:
             exec:
               command: ["hsds-node-state"]
