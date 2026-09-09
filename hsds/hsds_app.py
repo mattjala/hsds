@@ -15,8 +15,12 @@ from h5json.time_util import getNow
 def _enqueue_output(out, queue, loglevel):
     # loglevel is unused: level filtering happens in the node processes
     # themselves (hsds_logger), lines are passed through verbatim
+    #
+    # The pipe is opened in text mode (see Popen below) so readline returns
+    # str, and the sentinel has to be "".  With a bytes sentinel the equality
+    # test never matches at EOF and this loop spins, enqueuing "" forever.
     try:
-        for line in iter(out.readline, b""):
+        for line in iter(out.readline, ""):
             queue.put(line)
         logging.debug("_enqueue_output close()")
         out.close()
@@ -172,24 +176,29 @@ class HsdsApp:
         else:
             f = sys.stdout
 
-        while True:
-            got_output = False
-            for q in self._queues:
-                try:
-                    line = q.get_nowait()  # or q.get(timeout=.1)
-                except queue.Empty:
-                    pass  # no output on this queue yet
-                else:
-                    if isinstance(line, bytes):
-                        # self.log.debug(line.decode("utf-8").strip())
-                        f.write(line.decode("utf-8"))
+        try:
+            while True:
+                got_output = False
+                for q in self._queues:
+                    try:
+                        line = q.get_nowait()  # or q.get(timeout=.1)
+                    except queue.Empty:
+                        pass  # no output on this queue yet
                     else:
-                        f.write(line)
-                    got_output = True
-            if not got_output:
-                break  # all queues empty for now
-        if self._logfile:
-            f.close()
+                        if isinstance(line, bytes):
+                            # self.log.debug(line.decode("utf-8").strip())
+                            f.write(line.decode("utf-8"))
+                        else:
+                            f.write(line)
+                        got_output = True
+                if not got_output:
+                    break  # all queues empty for now
+        finally:
+            # the logfile is opened buffered, so anything written but not
+            # closed is lost - and that tail is exactly what explains a
+            # failure.  Close on every path out, not just the happy one.
+            if self._logfile:
+                f.close()
 
     def check_processes(self):
         # self.log.debug("check processes")
@@ -197,8 +206,11 @@ class HsdsApp:
         for pname in self._processes:
             p = self._processes[pname]
             if p.poll() is not None:
-                result = p.communicate()
-                msg = f"process {pname} ended, result: {result}"
+                # no communicate() here: the reader thread owns p.stdout and
+                # closes it at EOF, so communicate() races it and can raise on
+                # an already closed pipe.  poll() has the returncode already,
+                # and the output has gone to the queue.
+                msg = f"process {pname} ended, returncode: {p.returncode}"
                 self.log.warning(msg)
                 # TBD - restart failed process
 
@@ -368,6 +380,11 @@ class HsdsApp:
             if p.poll():
                 logging.info(f"terminating process {pname}")
                 p.terminate()
+
+        # final drain - the sub-processes have exited, so whatever is still
+        # queued is the tail of the log and no later tick will write it out
+        self.print_process_output()
+
         self._processes = {}  # reset
         for t in self._threads:
             del t

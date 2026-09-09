@@ -1,0 +1,187 @@
+# Minimal HSDS deployment for headless-Kubernetes integration testing.
+#
+# "Headless" means HEAD_PORT=0: there is no head node, so service nodes discover
+# data nodes through the k8s API using k8s_dn_label_selector. That is the code
+# path in k8s_update_dn_info() which, unlike docker_update_dn_info(), has no head
+# node available to tell it the cluster's readiness state.
+#
+# Storage is POSIX so the test needs no cloud credentials and no network egress.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hsds
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hsds
+rules:
+  # getPodIps() lists every pod in the namespace and filters by label
+  # client-side, so a namespaced list permission is sufficient.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hsds
+subjects:
+  - kind: ServiceAccount
+    name: hsds
+roleRef:
+  kind: Role
+  name: hsds
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hsds-override
+data:
+  override.yml: |
+    root_dir: /data
+    log_level: INFO
+    # kubectl port-forward pins to one pod instead of load balancing, so the
+    # whole suite lands on a single service node and the chunk-heavy tests push
+    # active_tasks past the default 100, which answers 503.
+    max_task_count: 0
+    # bucket_name (hsdstest), allow_noauth (true) and k8s_dn_label_selector
+    # (app=hsds) all match the shipped defaults in admin/config/config.yml.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hsds
+spec:
+  selector:
+    app: hsds
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5101
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hsds
+  labels:
+    app: hsds
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hsds
+  template:
+    metadata:
+      labels:
+        app: hsds
+    spec:
+      serviceAccountName: hsds
+      initContainers:
+        # the POSIX driver expects root_dir/bucket_name to already exist
+        - name: mkbucket
+          image: hsds-test:ci
+          imagePullPolicy: IfNotPresent
+          command: ["mkdir", "-p", "/data/hsdstest"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: sn
+          image: hsds-test:ci
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_TYPE
+              value: sn
+            - name: HEAD_PORT
+              value: "0"
+          ports:
+            - containerPort: 5101
+              name: sn
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: override
+              mountPath: /config/override.yml
+              subPath: override.yml
+            # configmap built by run.sh from admin/config/*.default
+            - name: auth
+              mountPath: /config/passwd.txt
+              subPath: passwd.txt
+            - name: auth
+              mountPath: /config/groups.txt
+              subPath: groups.txt
+          # Both probes assert node_state via hsds-node-state. /info bypasses the
+          # gate (INFO_METHODS in hsds_logger.request), so an httpGet against it
+          # stays green while the node is wedged in WAITING. This image is built
+          # from the working tree, so it always carries the script.
+          livenessProbe:
+            exec:
+              command: ["hsds-node-state"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["hsds-node-state"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+        - name: dn
+          image: hsds-test:ci
+          imagePullPolicy: IfNotPresent
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/sbin/killall5", "-15"]
+          env:
+            - name: NODE_TYPE
+              value: dn
+            - name: HEAD_PORT
+              value: "0"
+          ports:
+            - containerPort: 6101
+              name: dn
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: override
+              mountPath: /config/override.yml
+              subPath: override.yml
+            # configmap built by run.sh from admin/config/*.default
+            - name: auth
+              mountPath: /config/passwd.txt
+              subPath: passwd.txt
+            - name: auth
+              mountPath: /config/groups.txt
+              subPath: groups.txt
+          livenessProbe:
+            exec:
+              command: ["hsds-node-state"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["hsds-node-state"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        # single-node k3s, so a hostPath is shared by every replica
+        - name: data
+          hostPath:
+            path: /tmp/hsds-test-data
+            type: DirectoryOrCreate
+        - name: auth
+          configMap:
+            name: hsds-auth
+        - name: override
+          configMap:
+            name: hsds-override

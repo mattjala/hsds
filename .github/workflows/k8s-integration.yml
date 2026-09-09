@@ -1,0 +1,51 @@
+name: k8s integration
+
+# Runs HSDS headless on a real k3s cluster and asserts it reaches READY, serves,
+# and keeps its data across a rescale. The k8s path is the one where service
+# nodes discover data nodes through the Kubernetes API rather than a head node.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  headless-k8s:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # the suite runs on the runner and reaches the cluster over a port-forward
+      - name: Install HSDS and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e .
+
+      # hsload, which run.sh uses to load the suite's sample data
+      - uses: actions/checkout@v4
+        with:
+          repository: HDFGroup/h5pyd
+          path: h5pyd
+      - name: Install h5pyd
+        working-directory: h5pyd
+        run: pip install .
+
+      # pinned: this pipes a third-party script into a shell on every push and PR
+      - name: Install k3d
+        env:
+          K3D_VERSION: v5.9.0
+        run: |
+          curl -sSL "https://raw.githubusercontent.com/k3d-io/k3d/${K3D_VERSION}/install.sh" \
+            | TAG="${K3D_VERSION}" bash
+
+      - name: Run headless k8s readiness and integration test
+        env:
+          RUN_INTEG: "1"   # hsload is installed above, so its absence is a bug
+        run: tests/k8s/run.sh 3
