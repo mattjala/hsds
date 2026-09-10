@@ -1,20 +1,11 @@
 name: Release
 
 # Cuts a release from a pushed tag: builds the distributions, attaches them to
-# a GitHub release whose notes are generated from the commits/PRs since the
-# previous release, and uploads them to PyPI (https://pypi.org/project/hsds/).
+# a GitHub release whose notes come from CHANGELOG.md, and uploads them to
+# PyPI (https://pypi.org/project/hsds/).
 #
 # Docker images are built separately by docker-image.yml, which already
 # triggers on the same `v*` tags.
-#
-# To cut a release:
-#   1. Bump the version in pyproject.toml (the SSOT) AND the matching
-#      HSDS_VERSION in hsds/basenode.py - the `version` job fails if the two
-#      disagree, since basenode's copy is what /about reports to clients.
-#   2. git tag -a v0.9.5 -m "v0.9.5" && git push origin v0.9.5
-#
-# `workflow_dispatch` runs the validation half only (publishes nothing), so
-# the version/tag checks can be rehearsed off a branch before tagging.
 
 on:
   workflow_dispatch:
@@ -67,6 +58,14 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
         run: python .github/scripts/release_version.py
+
+      # Fails here rather than in github-release, so a changelog that does not
+      # describe the version being cut stops the run before anything is built,
+      # tagged or published.
+      - name: Check CHANGELOG.md against the version
+        run: |
+          python .github/scripts/changelog_notes.py \
+            --version "${{ steps.ssot.outputs.version }}" --output /dev/null
 
       - name: Summary
         run: |
@@ -145,13 +144,10 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # Create the tag. Derived from the SSOT rather than typed by hand, so it
-  # cannot disagree with pyproject.toml.
+  # Create the tag.
   #
   # Placed after build and before github-release, keeping the pipeline
-  # ordered by how hard each step is to undo: validate and build create
-  # nothing, a tag and a release can be deleted, a PyPI upload cannot. A
-  # failed build therefore never leaves a stray tag behind.
+  # ordered by how hard each step is to undo.
   # ---------------------------------------------------------------------
   tag:
     name: Tag
@@ -194,9 +190,9 @@ jobs:
           git push origin "$TAG"
 
   # ---------------------------------------------------------------------
-  # GitHub release. Notes come from --generate-notes (commits/PRs since the
-  # previous release) rather than a hand-maintained CHANGELOG, which HSDS
-  # does not have. The built dists are attached alongside.
+  # GitHub release. The notes are CHANGELOG.md's Executive Summary section,
+  # with --generate-notes appending the commits/PRs since the previous release
+  # underneath it.
   # ---------------------------------------------------------------------
   github-release:
     name: GitHub release
@@ -213,28 +209,31 @@ jobs:
           name: dist
           path: dist
 
+      - name: Build the release body from CHANGELOG.md
+        run: |
+          python .github/scripts/changelog_notes.py \
+            --version "${{ needs.version.outputs.version }}" \
+            --output description.txt
+          echo "--- release body ---"
+          cat description.txt
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
-          args=(--title "$TAG" --verify-tag --generate-notes)
+          # --notes-file with --generate-notes keeps both: GitHub prepends the
+          # given body to the notes it generates.
+          args=(--title "$TAG" --verify-tag --generate-notes
+                --notes-file description.txt)
           if [ "$PRERELEASE" = "true" ]; then
             args+=(--prerelease)
           fi
           gh release create "$TAG" "${args[@]}" dist/*
 
   # ---------------------------------------------------------------------
-  # PyPI. Uses Trusted Publishing (OIDC) - no long-lived API token in repo
-  # secrets. Requires a one-time publisher config on PyPI plus a `pypi`
-  # environment on this repo; both are spelled out in the Publish step below.
-  #
-  # Runs after github-release rather than alongside it. The two publish to
-  # places with very different undo stories: a GitHub release can be deleted
-  # and recreated, while PyPI permanently burns a version number - a deleted
-  # release cannot be re-uploaded. Ordering it this way means a failure in the
-  # recoverable half stops the irreversible half from happening at all.
+  # PyPI. Uses Trusted Publishing (OIDC)
   # ---------------------------------------------------------------------
   pypi:
     name: Publish to PyPI
@@ -254,12 +253,3 @@ jobs:
 
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Trusted Publishing is configured at
-        # https://pypi.org/manage/project/hsds/settings/publishing/
-        #   owner: HDFGroup   repo: hsds
-        #   workflow: release.yml   environment: pypi
-        #
-        # To use an API token instead, drop the `id-token: write` permission
-        # above and add:
-        #   with:
-        #     password: ${{ secrets.PYPI_API_TOKEN }}

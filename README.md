@@ -13,6 +13,11 @@ Data can be stored in either a POSIX files system, or using object-based storage
 AWS S3, Azure Blob Storage, or [MinIO](https://min.io).
 HSDS can be run a single machine with or without Docker or on a cluster using Kubernetes (or AKS on Microsoft Azure).
 
+## Release Notes
+
+[CHANGELOG.md](CHANGELOG.md) records the changes in the release being prepared; for
+earlier releases, see the notes on each [release](https://github.com/HDFGroup/hsds/releases).
+
 ## What's New in HSDS v1.0.0
 
 ### New Features
