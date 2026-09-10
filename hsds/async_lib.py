@@ -514,6 +514,12 @@ async def scanRoot(app, rootid, update=False, bucket=None):
         log.warn(msg)
         return {}
 
+    if rootid in app["deleted_ids"]:
+        # the root went away after this scan was queued - writing .info.json
+        # now would re-create keys that bucketGC has removed, or is removing
+        log.info(f"scanRoot - {rootid} has been deleted, skipping scan")
+        return {}
+
     if not bucket:
         bucket = config.get("bucket_name")
     if not bucket:
