@@ -42,6 +42,7 @@ from .util.authUtil import aclCheck
 from .util.httpUtil import http_get, http_put, http_post, http_delete
 from .util.domainUtil import getBucketForDomain, verifyRoot, getLimits
 from .util.storUtil import getCompressors
+from .util.dsetUtil import normalizeFilters
 
 from .basenode import getVersion
 from . import hsds_logger as log
@@ -1599,6 +1600,8 @@ def getDatasetCreateArgs(body,
     if creation_props:
         log.debug(f"POST_Dataset creation props: {creation_props}")
         try:
+            if "filters" in creation_props:
+                creation_props["filters"] = normalizeFilters(creation_props["filters"])
             validateDatasetCreationProps(creation_props, type_json=type_json, shape=shape_json)
         except (KeyError, TypeError, ValueError) as e:
             msg = f"Provided creation properties are invalid: {e}"

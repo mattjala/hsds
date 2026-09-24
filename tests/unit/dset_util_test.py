@@ -23,7 +23,7 @@ from hsds.util.dsetUtil import get_slices
 from hsds.util.dsetUtil import getSelectionList, getSelectionPagination
 from hsds.util.dsetUtil import parseRegionRefParam, extractJsonArrayElement
 from hsds.util.dsetUtil import regionRefSelectionToTargetSelection, unwrapSingleElement
-from hsds.util.dsetUtil import getDatasetCreationProps
+from hsds.util.dsetUtil import getDatasetCreationProps, normalizeFilters
 
 
 class DsetUtilTest(unittest.TestCase):
@@ -668,6 +668,55 @@ class DsetUtilTest(unittest.TestCase):
 
         # and one with neither reports empty props rather than raising
         self.assertEqual(getDatasetCreationProps({"id": "d-123"}), {})
+
+    def testNormalizeFilters(self):
+        deflate = {"class": "H5Z_FILTER_DEFLATE", "id": 1, "name": "gzip"}
+        lz4 = {"class": "H5Z_FILTER_LZ4", "id": 32004, "name": "lz4"}
+
+        # h5pyd 0.21's gzip spec has no name
+        spec = {"class": "H5Z_FILTER_DEFLATE", "id": 1, "level": 9}
+        self.assertEqual(normalizeFilters([spec]), [dict(deflate, level=9)])
+
+        # h5pyd 0.21 sends other compressors as a user filter with just a name
+        spec = {"class": "H5Z_FILTER_USER", "name": "lz4", "level": 5}
+        self.assertEqual(normalizeFilters([spec]), [dict(lz4, level=5)])
+        spec = {"class": "H5Z_FILTER_USER", "id": 32004}
+        self.assertEqual(normalizeFilters([spec]), [lz4])
+
+        # class alone is enough
+        spec = {"class": "H5Z_FILTER_FLETCHER32"}
+        expected = {"class": "H5Z_FILTER_FLETCHER32", "id": 3, "name": "fletcher32"}
+        self.assertEqual(normalizeFilters([spec]), [expected])
+
+        # bare names and ids, including the deflate alias, get default options
+        for spec in ("gzip", "deflate", 1):
+            self.assertEqual(normalizeFilters([spec]), [dict(deflate, level=4)])
+
+        # a name the client gave is kept, and the input isn't modified
+        spec = {"class": "H5Z_FILTER_DEFLATE", "name": "deflate"}
+        self.assertEqual(normalizeFilters([spec])[0]["name"], "deflate")
+        self.assertEqual(spec, {"class": "H5Z_FILTER_DEFLATE", "name": "deflate"})
+
+        # order is preserved
+        filters = normalizeFilters(["shuffle", "gzip"])
+        classes = [f["class"] for f in filters]
+        self.assertEqual(classes, ["H5Z_FILTER_SHUFFLE", "H5Z_FILTER_DEFLATE"])
+
+        # a wrong id is kept, not corrected, so validation still rejects it
+        spec = {"class": "H5Z_FILTER_DEFLATE", "id": 2}
+        self.assertEqual(normalizeFilters([spec])[0]["id"], 2)
+
+        # things validation should reject pass through unchanged...
+        for spec in ({"class": "H5Z_FILTER_USER", "name": "shrink-o-rama"},
+                     {"class": "H5Z_FILTER_FOOBAR"},
+                     {"id": 1},
+                     3.5):
+            self.assertEqual(normalizeFilters([spec]), [spec])
+        self.assertEqual(normalizeFilters("gzip"), "gzip")
+
+        # ...except unknown bare names, which can't be looked up at all
+        with self.assertRaises(KeyError):
+            normalizeFilters(["shrink-o-rama"])
 
 
 if __name__ == "__main__":

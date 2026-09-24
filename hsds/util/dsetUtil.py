@@ -17,6 +17,7 @@ import re
 from h5json.shape_util import getShapeDims
 from h5json.objid import isValidUuid
 from h5json.array_util import jsonToArray, bytesArrayToList
+from h5json.filters import FILTER_DEFS, getFilterItem
 from h5json import selections
 
 from .. import hsds_logger as log
@@ -61,6 +62,65 @@ def getDatasetCreationProps(dset_json):
             cpl["layout"] = layout
 
     return cpl
+
+
+def _getFilterDef(filter_json):
+    """ Return the FILTER_DEFS entry the given filter dict refers to, or None.
+    A registered class identifies the filter directly; H5Z_FILTER_USER is looked
+    up by id, then by name. """
+    filter_class = filter_json["class"]
+    if filter_class != "H5Z_FILTER_USER":
+        for filter_def in FILTER_DEFS:
+            if filter_def[0] == filter_class:
+                return filter_def
+        return None
+    if "id" in filter_json:
+        key, index = filter_json["id"], 1
+    elif "name" in filter_json:
+        key, index = filter_json["name"], 2
+        if key in ("deflate", "zlib"):
+            key = "gzip"
+    else:
+        return None
+    for filter_def in FILTER_DEFS:
+        if filter_def[index] == key:
+            return filter_def
+    return None
+
+
+def normalizeFilters(filters):
+    """ Return a copy of the given creationProperties filter list with each
+    filter spelled out as a dict with class, id and name.
+
+    h5json's validateFilter requires all three keys, but clients - h5pyd 0.21
+    and earlier among them - send abbreviated specs: a bare name or id, a dict with only a class,
+    or H5Z_FILTER_USER plus the name of a registered filter.  Missing keys are
+    filled in from FILTER_DEFS, and a user filter that names a registered one is
+    given that filter's class.  Anything unrecognized is passed through
+    unchanged for validation to reject, except that a bare name or id that isn't
+    a known filter raises KeyError here.
+    """
+    if not isinstance(filters, list):
+        return filters
+
+    normalized = []
+    for filter_item in filters:
+        if isinstance(filter_item, (str, int)) and not isinstance(filter_item, bool):
+            # getFilterItem also adds the defaults for any options (e.g. gzip level)
+            normalized.append(getFilterItem(filter_item))
+            continue
+        if not isinstance(filter_item, dict) or "class" not in filter_item:
+            normalized.append(filter_item)
+            continue
+        filter_json = dict(filter_item)
+        filter_def = _getFilterDef(filter_json)
+        if filter_def:
+            filter_json["class"] = filter_def[0]
+            filter_json.setdefault("id", filter_def[1])
+            filter_json.setdefault("name", filter_def[2])
+        normalized.append(filter_json)
+
+    return normalized
 
 
 def isSelectAll(selection, dims):
