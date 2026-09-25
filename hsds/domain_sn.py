@@ -140,6 +140,44 @@ def _isMissingAttributeError(exc):
     return "not found in dtype" in msg or "is not valid for non-compound dtype" in msg
 
 
+def _checkQuerySyntax(query):
+    """ Raise ValueError if the given domain query isn't well formed, without
+    requiring any of the attributes it names to exist.
+
+    The h5json parser checks field names as it parses, so a query naming an
+    unknown attribute fails on that name before the parser reaches any grammar
+    error later in the string, and arrayQuery can't tell the two apart.  Field
+    names can only come from string and identifier tokens, so parse once against
+    a placeholder dtype with a field for every one of those; extra fields don't
+    change how the query parses.
+
+    Uses h5json.query_util internals (no public parse-only entry point exists).
+    If they're missing or behave unexpectedly the check is skipped, which leaves
+    the per-domain evaluation to catch what it can, as before. """
+    try:
+        from h5json.query_util import _tokenize, _Parser
+    except ImportError:
+        log.warn("h5json query parser not available, skipping query syntax check")
+        return
+
+    tokens = _tokenize(query)  # raises ValueError on invalid characters
+    try:
+        # a compound dtype needs at least one field, so start with a placeholder;
+        # empty names are left out so the parser still rejects field('')
+        field_names = {"_hsds_placeholder_"}
+        for tok in tokens:
+            if tok[0] in ("STR", "IDENT") and isinstance(tok[1], str) and tok[1]:
+                field_names.add(tok[1])
+        dtype = np.dtype([(name, "i1") for name in sorted(field_names)])
+        _Parser(tokens, dtype).parse()
+    except ValueError:
+        raise  # a syntax error
+    except Exception as e:
+        msg = f"unexpected {type(e).__name__} from h5json query parser, "
+        msg += f"skipping query syntax check: {e}"
+        log.warn(msg)
+
+
 def _getQueryableFields(attributes):
     """ Given a group's "attributes" dict (as returned by the crawler),
     return (field_defs, values) for just the scalar primitive attributes,
@@ -204,6 +242,15 @@ async def get_domains(request, include_hrefs=False):
     else:
         query = request.rel_url.query["query"]
         log.info(f"get_domains - using query: {query}")
+        # Check the grammar before crawling the folder. The union check done
+        # after the crawl can't do it alone: it doesn't run when no domain has
+        # queryable attributes, and it gives up at the first attribute name it
+        # doesn't recognize.
+        try:
+            _checkQuerySyntax(query)
+        except ValueError as e:
+            log.warn(f"get_domains - invalid query: {query}: {e}")
+            raise HTTPBadRequest(reason="Invalid query expression")
 
     # use "verbose" to pull extra info
     k = "verbose"

@@ -1471,6 +1471,25 @@ class DomainTest(unittest.TestCase):
         self.assertTrue("domains" in rspJson)
         self.assertEqual(len(rspJson["domains"]), 0)
 
+        # but a grammar error is still an error when the query also names an
+        # unknown attribute (including one compared to a string, and one that
+        # comes before the error)
+        for query in ("no_such_attr > 7 AND",
+                      "no_such_attr == 'abc' AND attr1 >",
+                      "(no_such_attr > 7",
+                      "attr1 > 7 AND no_such_attr >"):
+            params = {"domain": folder + "/", "query": query}
+            rsp = self.session.get(req, params=params, headers=headers)
+            self.assertEqual(rsp.status_code, 400, f"query: {query}")
+
+        # and a well-formed query mixing known and unknown attributes still just
+        # doesn't match
+        query = "attr1 > 7 AND no_such_attr == 'abc'"
+        params = {"domain": folder + "/", "query": query}
+        rsp = self.session.get(req, params=params, headers=headers)
+        self.assertEqual(rsp.status_code, 200)
+        self.assertEqual(len(json.loads(rsp.text)["domains"]), 0)
+
         # empty sub-domains
         domain = helper.getTestDomain("tall.h5") + "/"
         params = {"domain": domain}
