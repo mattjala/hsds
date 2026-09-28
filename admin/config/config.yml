@@ -55,6 +55,12 @@ aio_max_pool_connections: 64 # number of connections to keep in conection pool f
 client_pool_count: 10 # pool count for SessionClient
 metadata_mem_cache_size: 128m # 128 MB - metadata cache size per DN node
 metadata_mem_cache_expire: 3600 # expire cache items after one hour
+# chunk_mem_cache_size also caps chunk size: a chunk has to fit in the cache to be written,
+# so creating a dataset with a larger chunk (or a larger contiguous or compact dataset) returns 400.
+# Raise it, along with dn_ram, to allow bigger chunks; a DN needs about 2-3x the chunk size in
+# memory to read or write one.  Chunks of linked datasets (H5D_*_REF layouts, e.g. from
+# hsload --link) are sized by the source HDF5 file and aren't checked, so a very large source
+# chunk can still exhaust DN memory when read.
 chunk_mem_cache_size: 128m # 128 MB - chunk cache size per DN node
 chunk_mem_cache_expire: 3600 # expire cache items after one hour
 timeout: 30 # http timeout - 30 sec
